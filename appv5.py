@@ -12,12 +12,37 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilo CSS
+# --- DISEÑO CSS CORREGIDO PARA MÉTRICAS VISIBLES ---
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e0e0e0; }
-    div.stButton > button:first-child { border-radius: 8px; font-weight: bold; }
+    /* Fondo general de la página */
+    .stApp {
+        background-color: #f0f2f6;
+    }
+    /* Estilo de las tarjetas de métricas (los globos) */
+    [data-testid="stMetric"] {
+        background-color: #ffffff !important;
+        border: 1px solid #d1d5db !important;
+        padding: 20px !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+        color: #1f2937 !important;
+    }
+    /* Forzar color de texto en etiquetas de métrica */
+    [data-testid="stMetricLabel"] {
+        color: #4b5563 !important;
+        font-weight: bold !important;
+    }
+    /* Forzar color de texto en valores de métrica */
+    [data-testid="stMetricValue"] {
+        color: #111827 !important;
+    }
+    /* Botones más definidos */
+    div.stButton > button:first-child {
+        border-radius: 8px;
+        font-weight: bold;
+        border: 1px solid #d1d5db;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -69,15 +94,16 @@ else:
             df = pd.DataFrame(res.data)
             df['Cuenta Mail'] = df['cuentas'].apply(lambda x: x['mail'] if x else "N/A")
             
+            # Estas son las métricas que ahora tienen fondo blanco sólido y sombra
             m1, m2, m3 = st.columns(3)
-            m1.metric("Total Clientes", len(df))
+            m1.metric("Total Clientes", f"{len(df)} pers.")
             m2.metric("Recaudación Total", f"USD {df['costo'].sum():,.0f}")
             
-            # Resumen de Usuarios por Cuenta (Solo Tabla)
             df_ctas = df['Cuenta Mail'].value_counts().reset_index()
-            df_ctas.columns = ['Cuenta Mail', 'Cantidad de Clientes']
+            df_ctas.columns = ['Cuenta Mail', 'Cant. Clientes']
             m3.metric("Cuentas en Uso", len(df_ctas))
             
+            st.write("---")
             st.subheader("👥 Clientes por Cuenta")
             st.dataframe(df_ctas, hide_index=True, use_container_width=True)
             
@@ -108,9 +134,9 @@ else:
                             supabase.table("clientes").delete().eq("id", id_del).execute()
                             st.rerun()
         else:
-            st.info("No hay datos.")
+            st.info("No hay datos cargados.")
 
-    # --- 2. REGISTRAR / EDITAR (CON FECHA MANUAL) ---
+    # --- 2. REGISTRAR / EDITAR ---
     elif choice == "📝 Registrar/Editar":
         edit = st.session_state['edit_client']
         st.header("🛠️ Modificar" if edit else "🆕 Nuevo Registro")
@@ -119,7 +145,7 @@ else:
         res_plns = supabase.table("planes").select("*").execute()
 
         if not res_ctas.data or not res_plns.data:
-            st.error("Cargá primero Cuentas y Planes.")
+            st.error("Faltan Cuentas o Planes.")
         else:
             with st.form("f_reg", clear_on_submit=not edit):
                 col1, col2 = st.columns(2)
@@ -127,7 +153,6 @@ else:
                     nombre = st.text_input("Nombre Cliente", value=edit['nombre'] if edit else "")
                     zona = st.text_input("Zona", value=edit['zona'] if edit else "")
                     plan = st.selectbox("Plan", [p['nombre_plan'] for p in res_plns.data])
-                    # CAMPO DE FECHA MANUAL
                     fecha_def = datetime.strptime(edit['fecha_inst'], '%Y-%m-%d') if edit else datetime.now()
                     fecha_inst = st.date_input("Fecha de Instalación", value=fecha_def)
                 with col2:
