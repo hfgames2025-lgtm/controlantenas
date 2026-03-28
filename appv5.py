@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilo CSS para mejorar la visualización
+# Estilo CSS
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
@@ -29,11 +29,10 @@ supabase: Client = create_client(url, key)
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'edit_client' not in st.session_state: st.session_state['edit_client'] = None
 
-# --- PANTALLA DE LOGIN ---
+# --- LOGIN ---
 if not st.session_state['logged_in']:
     col1, col2, col3 = st.columns([1, 1.5, 1])
     with col2:
-        st.write("")
         st.write("")
         st.title("🛰️ Control de Taller")
         with st.container(border=True):
@@ -47,24 +46,21 @@ if not st.session_state['logged_in']:
                     st.session_state['rol'] = res.data[0]['rol']
                     st.rerun()
                 else:
-                    st.error("Acceso denegado. Revisa usuario y clave.")
+                    st.error("Usuario o clave incorrectos.")
 
 # --- SISTEMA ADENTRO ---
 else:
-    # Sidebar
     with st.sidebar:
         st.title("📡 Menú Taller")
         st.write(f"Usuario: **{st.session_state['username'].upper()}**")
-        st.write(f"Rol: {st.session_state['rol']}")
         st.divider()
         menu = ["📊 Panel General", "📝 Registrar/Editar", "📧 Cuentas", "⚙️ Planes", "👥 Usuarios"]
-        choice = st.selectbox("Seleccionar Sección:", menu)
-        st.write("")
+        choice = st.selectbox("Sección:", menu)
         if st.button("🔒 Salir", use_container_width=True):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    # --- 1. PANEL GENERAL (Con métricas por cuenta) ---
+    # --- 1. PANEL GENERAL ---
     if choice == "📊 Panel General":
         st.header("📊 Resumen de Instalaciones")
         res = supabase.table("clientes").select("*, cuentas(mail)").execute()
@@ -73,154 +69,142 @@ else:
             df = pd.DataFrame(res.data)
             df['Cuenta Mail'] = df['cuentas'].apply(lambda x: x['mail'] if x else "N/A")
             
-            # Métricas Principales
             m1, m2, m3 = st.columns(3)
-            m1.metric("Total Clientes", len(df), "👤")
-            m2.metric("Recaudación Total", f"USD {df['costo'].sum():,.0f}", "💰")
+            m1.metric("Total Clientes", len(df))
+            m2.metric("Recaudación Total", f"USD {df['costo'].sum():,.0f}")
             
-            # Calcular Clientes por Cuenta
+            # Resumen de Usuarios por Cuenta (Solo Tabla)
             df_ctas = df['Cuenta Mail'].value_counts().reset_index()
-            df_ctas.columns = ['Cuenta', 'Clientes']
-            m3.metric("Cuentas Activas", len(df_ctas), "📧")
+            df_ctas.columns = ['Cuenta Mail', 'Cantidad de Clientes']
+            m3.metric("Cuentas en Uso", len(df_ctas))
+            
+            st.subheader("👥 Clientes por Cuenta")
+            st.dataframe(df_ctas, hide_index=True, use_container_width=True)
             
             st.write("---")
-            
-            # Resumen de Usuarios por Cuenta
-            st.subheader("👥 Clientes por Cuenta Mail")
-            col_tabla, col_grafico = st.columns([1, 2])
-            with col_tabla:
-                st.dataframe(df_ctas, hide_index=True, use_container_width=True)
-            with col_grafico:
-                st.bar_chart(df_ctas.set_index('Cuenta'))
-            
-            st.write("---")
-            
-            # Listado Completo
             st.subheader("📋 Listado Detallado")
-            busq = st.text_input("🔍 Buscar por Nombre, Zona o Serie...")
+            busq = st.text_input("🔍 Buscar...")
             if busq:
                 df = df[df.apply(lambda r: r.astype(str).str.contains(busq, case=False).any(), axis=1)]
             
             st.dataframe(df.drop(columns=['cuentas', 'cuenta_id']), use_container_width=True, hide_index=True)
 
-            # Exportar
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False)
-            st.download_button("📥 Descargar Planilla Excel", output.getvalue(), "listado_taller.xlsx")
+            st.download_button("📥 Descargar Excel", output.getvalue(), "listado.xlsx")
 
-            st.write("---")
-            # Acciones rápidas
-            with st.expander("🛠️ Gestión de Registros (Editar/Borrar)"):
+            with st.expander("🛠️ Acciones (Editar/Borrar)"):
                 c1, c2 = st.columns(2)
                 with c1:
                     id_edit = st.number_input("ID para editar", min_value=0, step=1)
-                    if st.button("📝 Cargar Datos", use_container_width=True):
+                    if st.button("📝 Cargar Datos"):
                         st.session_state['edit_client'] = next((i for i in res.data if i['id'] == id_edit), None)
                         if st.session_state['edit_client']: st.success("Cargado. Ve a Registrar.")
                 with c2:
                     if st.session_state['rol'] == "Administrador":
                         id_del = st.number_input("ID para eliminar", min_value=0, step=1)
-                        if st.button("🗑️ Borrar Permanente", use_container_width=True):
+                        if st.button("🗑️ Borrar"):
                             supabase.table("clientes").delete().eq("id", id_del).execute()
                             st.rerun()
         else:
-            st.info("No hay datos cargados aún.")
+            st.info("No hay datos.")
 
-    # --- 2. REGISTRAR / EDITAR ---
+    # --- 2. REGISTRAR / EDITAR (CON FECHA MANUAL) ---
     elif choice == "📝 Registrar/Editar":
         edit = st.session_state['edit_client']
-        st.header("🛠️ Modificar Registro" if edit else "🆕 Nuevo Registro")
+        st.header("🛠️ Modificar" if edit else "🆕 Nuevo Registro")
         
         res_ctas = supabase.table("cuentas").select("*").execute()
         res_plns = supabase.table("planes").select("*").execute()
 
         if not res_ctas.data or not res_plns.data:
-            st.error("⚠️ Debes tener al menos una Cuenta y un Plan creados.")
+            st.error("Cargá primero Cuentas y Planes.")
         else:
             with st.form("f_reg", clear_on_submit=not edit):
                 col1, col2 = st.columns(2)
                 with col1:
                     nombre = st.text_input("Nombre Cliente", value=edit['nombre'] if edit else "")
-                    zona = st.text_input("Zona / Dirección", value=edit['zona'] if edit else "")
+                    zona = st.text_input("Zona", value=edit['zona'] if edit else "")
                     plan = st.selectbox("Plan", [p['nombre_plan'] for p in res_plns.data])
+                    # CAMPO DE FECHA MANUAL
+                    fecha_def = datetime.strptime(edit['fecha_inst'], '%Y-%m-%d') if edit else datetime.now()
+                    fecha_inst = st.date_input("Fecha de Instalación", value=fecha_def)
                 with col2:
                     costo = st.number_input("Costo", value=float(edit['costo']) if edit else 0.0)
                     s_ant = st.text_input("Serie Antena", value=edit['serie_antena'] if edit else "")
                     s_rou = st.text_input("Serie Router", value=edit['serie_router'] if edit else "")
-                
-                map_c = {c['mail']: c['id'] for c in res_ctas.data}
-                cta = st.selectbox("Asignar a Cuenta Mail", list(map_c.keys()))
+                    map_c = {c['mail']: c['id'] for c in res_ctas.data}
+                    cta = st.selectbox("Cuenta Mail", list(map_c.keys()))
 
-                btn_label = "💾 GUARDAR CAMBIOS" if edit else "➕ REGISTRAR INSTALACIÓN"
-                if st.form_submit_button(btn_label, use_container_width=True):
-                    d = {"nombre": nombre, "zona": zona, "plan": plan, "costo": costo, "serie_antena": s_ant, "serie_router": s_rou, "cuenta_id": map_c[cta], "fecha_inst": str(datetime.now().date())}
+                if st.form_submit_button("💾 GUARDAR"):
+                    d = {
+                        "nombre": nombre, "zona": zona, "plan": plan, "costo": costo, 
+                        "serie_antena": s_ant, "serie_router": s_rou, 
+                        "cuenta_id": map_c[cta], "fecha_inst": str(fecha_inst)
+                    }
                     if edit:
                         supabase.table("clientes").update(d).eq("id", edit['id']).execute()
                         st.session_state['edit_client'] = None
                     else:
                         supabase.table("clientes").insert(d).execute()
-                    st.success("Operación Exitosa")
+                    st.success("¡Guardado!")
                     st.rerun()
 
     # --- 3. CUENTAS ---
     elif choice == "📧 Cuentas":
-        st.header("📧 Gestión de Cuentas")
+        st.header("📧 Cuentas Mail")
         c1, c2 = st.columns([1, 2])
         with c1:
-            with st.container(border=True):
-                m = st.text_input("Nuevo Mail")
-                if st.button("➕ Agregar", use_container_width=True):
-                    supabase.table("cuentas").insert({"mail": m}).execute()
-                    st.rerun()
+            m = st.text_input("Nuevo Mail")
+            if st.button("➕ Agregar"):
+                supabase.table("cuentas").insert({"mail": m}).execute()
+                st.rerun()
         with c2:
             res = supabase.table("cuentas").select("*").execute()
             if res.data:
                 st.dataframe(pd.DataFrame(res.data), use_container_width=True, hide_index=True)
                 if st.session_state['rol'] == "Administrador":
                     id_c = st.number_input("ID Cuenta a borrar", min_value=0, step=1)
-                    if st.button("🗑️ Eliminar Cuenta"):
+                    if st.button("🗑️ Borrar Cuenta"):
                         supabase.table("cuentas").delete().eq("id", id_c).execute()
                         st.rerun()
 
     # --- 4. PLANES ---
     elif choice == "⚙️ Planes":
-        st.header("⚙️ Planes de Servicio")
+        st.header("⚙️ Planes")
         c1, c2 = st.columns([1, 2])
         with c1:
-            with st.container(border=True):
-                p = st.text_input("Nombre del Plan")
-                if st.button("➕ Crear", use_container_width=True):
-                    supabase.table("planes").insert({"nombre_plan": p}).execute()
-                    st.rerun()
+            p = st.text_input("Nombre Plan")
+            if st.button("➕ Crear"):
+                supabase.table("planes").insert({"nombre_plan": p}).execute()
+                st.rerun()
         with c2:
             res = supabase.table("planes").select("*").execute()
             if res.data:
                 st.dataframe(pd.DataFrame(res.data), use_container_width=True, hide_index=True)
                 if st.session_state['rol'] == "Administrador":
                     id_p = st.number_input("ID Plan a borrar", min_value=0, step=1)
-                    if st.button("🗑️ Eliminar Plan"):
+                    if st.button("🗑️ Borrar Plan"):
                         supabase.table("planes").delete().eq("id", id_p).execute()
                         st.rerun()
 
     # --- 5. USUARIOS ---
     elif choice == "👥 Usuarios":
-        st.header("👥 Gestión de Accesos")
+        st.header("👥 Accesos")
         if st.session_state['rol'] == "Administrador":
             with st.container(border=True):
-                colu, colp, colr = st.columns(3)
-                u = colu.text_input("Usuario")
-                p = colp.text_input("Clave")
-                r = colr.selectbox("Rol", ["Operador", "Administrador"])
-                if st.button("➕ Crear Usuario", use_container_width=True):
-                    supabase.table("usuarios").insert({"username": u.lower(), "password": p, "rol": r}).execute()
+                u, p, r = st.columns(3)
+                new_u = u.text_input("Usuario")
+                new_p = p.text_input("Clave")
+                new_r = r.selectbox("Rol", ["Operador", "Administrador"])
+                if st.button("➕ Crear Usuario"):
+                    supabase.table("usuarios").insert({"username": new_u.lower(), "password": new_p, "rol": new_r}).execute()
                     st.rerun()
-            
-            st.divider()
             res_u = supabase.table("usuarios").select("id, username, rol").execute()
             if res_u.data:
                 st.dataframe(pd.DataFrame(res_u.data), use_container_width=True, hide_index=True)
                 id_u = st.number_input("ID Usuario a borrar", min_value=0, step=1)
-                if st.button("🗑️ Quitar Acceso"):
+                if st.button("🗑️ Borrar"):
                     supabase.table("usuarios").delete().eq("id", id_u).execute()
                     st.rerun()
