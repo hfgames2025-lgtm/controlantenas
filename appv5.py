@@ -21,17 +21,23 @@ def check_hashes(password, hashed_text):
 conn = get_connection()
 c = conn.cursor()
 
-# 3. CREACIÓN DE TABLAS
+# 3. CREACIÓN DE TABLAS (Actualizada con Series de Equipos)
 c.execute('''CREATE TABLE IF NOT EXISTS usuarios 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, rol TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS cuentas 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, mail TEXT UNIQUE)''')
 c.execute('''CREATE TABLE IF NOT EXISTS planes 
              (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre_plan TEXT UNIQUE)''')
-c.execute('''CREATE TABLE IF NOT EXISTS clientes 
-             (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, zona TEXT, 
-              plan TEXT, costo REAL, fecha_inst TEXT, cuenta_id INTEGER,
-              FOREIGN KEY(cuenta_id) REFERENCES cuentas(id))''')
+
+# Agregamos los campos de serie si no existen (Migración básica)
+try:
+    c.execute('''CREATE TABLE IF NOT EXISTS clientes 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT, zona TEXT, 
+                  plan TEXT, costo REAL, fecha_inst TEXT, serie_antena TEXT, 
+                  serie_router TEXT, cuenta_id INTEGER,
+                  FOREIGN KEY(cuenta_id) REFERENCES cuentas(id))''')
+except:
+    pass
 
 # Usuario admin por defecto
 c.execute("SELECT * FROM usuarios WHERE username = 'admin'")
@@ -71,13 +77,15 @@ else:
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # --- SECCIÓN: PANEL GENERAL (CON BOTÓN EXCEL) ---
+    # --- SECCIÓN: PANEL GENERAL ---
     if choice == "📊 Panel General":
         st.header("Listado Global de Instalaciones")
         
         query = '''
             SELECT cl.id as ID, cl.nombre as Cliente, cl.zona as Ubicación, cl.plan as Plan, 
-                   cl.costo as 'Costo Mens.', cl.fecha_inst as 'Fecha Inst.', cu.mail as 'Cuenta Mail'
+                   cl.costo as 'Costo Mens.', cl.fecha_inst as 'Fecha Inst.', 
+                   cl.serie_antena as 'Serie Antena', cl.serie_router as 'Serie Router',
+                   cu.mail as 'Cuenta Mail'
             FROM clientes cl JOIN cuentas cu ON cl.cuenta_id = cu.id
         '''
         df = pd.read_sql(query, conn)
@@ -89,7 +97,7 @@ else:
             with col_met2:
                 st.metric("Recaudación Mensual", f"${df['Costo Mens.'].sum():,.2f}")
 
-            # --- BOTÓN EXPORTAR A EXCEL ---
+            # Botón Exportar
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Clientes')
@@ -101,7 +109,7 @@ else:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-            busqueda = st.text_input("🔍 Filtrar por nombre o zona")
+            busqueda = st.text_input("🔍 Filtrar por nombre, zona o series")
             if busqueda:
                 df = df[df.apply(lambda row: row.astype(str).str.contains(busqueda, case=False).any(), axis=1)]
             
@@ -118,7 +126,7 @@ else:
         else:
             st.info("Todavía no hay datos cargados.")
 
-    # --- LAS DEMÁS SECCIONES (IGUAL QUE ANTES) ---
+    # --- SECCIÓN: REGISTRAR CLIENTE (Con campos de Series) ---
     elif choice == "📝 Registrar Cliente":
         st.header("Nueva Instalación")
         cuentas_dis = pd.read_sql("SELECT c.id, c.mail, COUNT(cl.id) as ocupados FROM cuentas c LEFT JOIN clientes cl ON c.id = cl.cuenta_id GROUP BY c.id HAVING ocupados < 10", conn)
@@ -129,19 +137,32 @@ else:
         else:
             with st.form("reg"):
                 c1, c2 = st.columns(2)
-                nombre = c1.text_input("Nombre")
-                zona = c1.text_input("Zona")
-                fecha = c1.date_input("Fecha", datetime.now())
-                plan = c2.selectbox("Plan", planes_db['nombre_plan'].tolist())
-                costo = c2.number_input("Costo", min_value=0.0)
-                cta = c2.selectbox("Cuenta", cuentas_dis['mail'].tolist())
-                if st.form_submit_button("Guardar"):
-                    id_c = int(cuentas_dis[cuentas_dis['mail'] == cta]['id'].values[0])
-                    c.execute("INSERT INTO clientes (nombre, zona, plan, costo, fecha_inst, cuenta_id) VALUES (?,?,?,?,?,?)", (nombre, zona, plan, costo, str(fecha), id_c))
-                    conn.commit()
-                    st.success("¡Guardado!")
-                    st.rerun()
+                with c1:
+                    nombre = st.text_input("Nombre del Cliente")
+                    zona = st.text_input("Zona / Paraje")
+                    fecha = st.date_input("Fecha de Instalación", datetime.now())
+                    plan = st.selectbox("Plan Elegido", planes_db['nombre_plan'].tolist())
+                
+                with c2:
+                    s_antena = st.text_input("Nro de Serie Antena")
+                    s_router = st.text_input("Nro de Serie Router (opcional)")
+                    costo = st.number_input("Costo Mensual", min_value=0.0, step=100.0)
+                    cta = st.selectbox("Asignar a Cuenta Mail", cuentas_dis['mail'].tolist())
+                
+                if st.form_submit_button("Guardar Instalación"):
+                    if nombre and zona and s_antena:
+                        id_c = int(cuentas_dis[cuentas_dis['mail'] == cta]['id'].values[0])
+                        c.execute('''INSERT INTO clientes 
+                                     (nombre, zona, plan, costo, fecha_inst, serie_antena, serie_router, cuenta_id) 
+                                     VALUES (?,?,?,?,?,?,?,?)''', 
+                                  (nombre, zona, plan, costo, str(fecha), s_antena, s_router, id_c))
+                        conn.commit()
+                        st.success("¡Datos guardados con éxito!")
+                        st.rerun()
+                    else:
+                        st.error("El nombre, la zona y la serie de antena son obligatorios.")
 
+    # --- GESTIONAR CUENTAS ---
     elif choice == "📧 Gestionar Cuentas":
         st.header("Cuentas")
         m = st.text_input("Nuevo Mail")
@@ -153,6 +174,7 @@ else:
             except: st.error("Error")
         st.table(pd.read_sql("SELECT c.mail as 'Cuenta', COUNT(cl.id) as 'Ocupados' FROM cuentas c LEFT JOIN clientes cl ON c.id = cl.cuenta_id GROUP BY c.id", conn))
 
+    # --- CONFIGURAR PLANES ---
     elif choice == "⚙️ Configurar Planes":
         st.header("Planes")
         p = st.text_input("Nuevo Plan")
@@ -162,6 +184,7 @@ else:
             st.rerun()
         st.write(pd.read_sql("SELECT nombre_plan FROM planes", conn))
 
+    # --- GESTIONAR USUARIOS ---
     elif choice == "👥 Gestionar Usuarios":
         st.header("Usuarios")
         with st.form("u"):
