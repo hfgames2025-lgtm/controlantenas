@@ -8,43 +8,8 @@ from datetime import datetime
 st.set_page_config(
     page_title="Sistema Antenas Hugo",
     layout="wide",
-    page_icon="📡",
-    initial_sidebar_state="expanded"
+    page_icon="📡"
 )
-
-# --- DISEÑO CSS CORREGIDO PARA MÉTRICAS VISIBLES ---
-st.markdown("""
-    <style>
-    /* Fondo general de la página */
-    .stApp {
-        background-color: #f0f2f6;
-    }
-    /* Estilo de las tarjetas de métricas (los globos) */
-    [data-testid="stMetric"] {
-        background-color: #ffffff !important;
-        border: 1px solid #d1d5db !important;
-        padding: 20px !important;
-        border-radius: 12px !important;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
-        color: #1f2937 !important;
-    }
-    /* Forzar color de texto en etiquetas de métrica */
-    [data-testid="stMetricLabel"] {
-        color: #4b5563 !important;
-        font-weight: bold !important;
-    }
-    /* Forzar color de texto en valores de métrica */
-    [data-testid="stMetricValue"] {
-        color: #111827 !important;
-    }
-    /* Botones más definidos */
-    div.stButton > button:first-child {
-        border-radius: 8px;
-        font-weight: bold;
-        border: 1px solid #d1d5db;
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
 # Conexión a Supabase
 url = st.secrets["SUPABASE_URL"]
@@ -63,7 +28,7 @@ if not st.session_state['logged_in']:
         with st.container(border=True):
             u_ing = st.text_input("Usuario").lower().strip()
             p_ing = st.text_input("Contraseña", type='password').strip()
-            if st.button("🚀 Entrar al Sistema", use_container_width=True):
+            if st.button("🚀 Entrar", use_container_width=True):
                 res = supabase.table("usuarios").select("*").eq("username", u_ing).execute()
                 if res.data and p_ing == res.data[0]['password']:
                     st.session_state['logged_in'] = True
@@ -94,14 +59,19 @@ else:
             df = pd.DataFrame(res.data)
             df['Cuenta Mail'] = df['cuentas'].apply(lambda x: x['mail'] if x else "N/A")
             
-            # Estas son las métricas que ahora tienen fondo blanco sólido y sombra
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Clientes", f"{len(df)} pers.")
-            m2.metric("Recaudación Total", f"USD {df['costo'].sum():,.0f}")
-            
-            df_ctas = df['Cuenta Mail'].value_counts().reset_index()
-            df_ctas.columns = ['Cuenta Mail', 'Cant. Clientes']
-            m3.metric("Cuentas en Uso", len(df_ctas))
+            # Métricas en cajas con borde automático (Se ven bien siempre)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                with st.container(border=True):
+                    st.metric("Total Clientes", len(df))
+            with c2:
+                with st.container(border=True):
+                    st.metric("Recaudación Total", f"USD {df['costo'].sum():,.0f}")
+            with c3:
+                df_ctas = df['Cuenta Mail'].value_counts().reset_index()
+                df_ctas.columns = ['Cuenta Mail', 'Cant. Clientes']
+                with st.container(border=True):
+                    st.metric("Cuentas Activas", len(df_ctas))
             
             st.write("---")
             st.subheader("👥 Clientes por Cuenta")
@@ -121,16 +91,16 @@ else:
             st.download_button("📥 Descargar Excel", output.getvalue(), "listado.xlsx")
 
             with st.expander("🛠️ Acciones (Editar/Borrar)"):
-                c1, c2 = st.columns(2)
-                with c1:
+                col_e, col_b = st.columns(2)
+                with col_e:
                     id_edit = st.number_input("ID para editar", min_value=0, step=1)
-                    if st.button("📝 Cargar Datos"):
+                    if st.button("📝 Cargar Datos", use_container_width=True):
                         st.session_state['edit_client'] = next((i for i in res.data if i['id'] == id_edit), None)
                         if st.session_state['edit_client']: st.success("Cargado. Ve a Registrar.")
-                with c2:
+                with col_b:
                     if st.session_state['rol'] == "Administrador":
                         id_del = st.number_input("ID para eliminar", min_value=0, step=1)
-                        if st.button("🗑️ Borrar"):
+                        if st.button("🗑️ Borrar", use_container_width=True):
                             supabase.table("clientes").delete().eq("id", id_del).execute()
                             st.rerun()
         else:
@@ -162,7 +132,7 @@ else:
                     map_c = {c['mail']: c['id'] for c in res_ctas.data}
                     cta = st.selectbox("Cuenta Mail", list(map_c.keys()))
 
-                if st.form_submit_button("💾 GUARDAR"):
+                if st.form_submit_button("💾 GUARDAR", use_container_width=True):
                     d = {
                         "nombre": nombre, "zona": zona, "plan": plan, "costo": costo, 
                         "serie_antena": s_ant, "serie_router": s_rou, 
@@ -181,17 +151,18 @@ else:
         st.header("📧 Cuentas Mail")
         c1, c2 = st.columns([1, 2])
         with c1:
-            m = st.text_input("Nuevo Mail")
-            if st.button("➕ Agregar"):
-                supabase.table("cuentas").insert({"mail": m}).execute()
-                st.rerun()
+            with st.container(border=True):
+                m = st.text_input("Nuevo Mail")
+                if st.button("➕ Agregar", use_container_width=True):
+                    supabase.table("cuentas").insert({"mail": m}).execute()
+                    st.rerun()
         with c2:
             res = supabase.table("cuentas").select("*").execute()
             if res.data:
                 st.dataframe(pd.DataFrame(res.data), use_container_width=True, hide_index=True)
                 if st.session_state['rol'] == "Administrador":
                     id_c = st.number_input("ID Cuenta a borrar", min_value=0, step=1)
-                    if st.button("🗑️ Borrar Cuenta"):
+                    if st.button("🗑️ Borrar Cuenta", use_container_width=True):
                         supabase.table("cuentas").delete().eq("id", id_c).execute()
                         st.rerun()
 
@@ -200,17 +171,18 @@ else:
         st.header("⚙️ Planes")
         c1, c2 = st.columns([1, 2])
         with c1:
-            p = st.text_input("Nombre Plan")
-            if st.button("➕ Crear"):
-                supabase.table("planes").insert({"nombre_plan": p}).execute()
-                st.rerun()
+            with st.container(border=True):
+                p = st.text_input("Nombre Plan")
+                if st.button("➕ Crear", use_container_width=True):
+                    supabase.table("planes").insert({"nombre_plan": p}).execute()
+                    st.rerun()
         with c2:
             res = supabase.table("planes").select("*").execute()
             if res.data:
                 st.dataframe(pd.DataFrame(res.data), use_container_width=True, hide_index=True)
                 if st.session_state['rol'] == "Administrador":
                     id_p = st.number_input("ID Plan a borrar", min_value=0, step=1)
-                    if st.button("🗑️ Borrar Plan"):
+                    if st.button("🗑️ Borrar Plan", use_container_width=True):
                         supabase.table("planes").delete().eq("id", id_p).execute()
                         st.rerun()
 
@@ -223,13 +195,13 @@ else:
                 new_u = u.text_input("Usuario")
                 new_p = p.text_input("Clave")
                 new_r = r.selectbox("Rol", ["Operador", "Administrador"])
-                if st.button("➕ Crear Usuario"):
+                if st.button("➕ Crear Usuario", use_container_width=True):
                     supabase.table("usuarios").insert({"username": new_u.lower(), "password": new_p, "rol": new_r}).execute()
                     st.rerun()
             res_u = supabase.table("usuarios").select("id, username, rol").execute()
             if res_u.data:
                 st.dataframe(pd.DataFrame(res_u.data), use_container_width=True, hide_index=True)
                 id_u = st.number_input("ID Usuario a borrar", min_value=0, step=1)
-                if st.button("🗑️ Borrar"):
+                if st.button("🗑️ Borrar Usuario", use_container_width=True):
                     supabase.table("usuarios").delete().eq("id", id_u).execute()
                     st.rerun()
