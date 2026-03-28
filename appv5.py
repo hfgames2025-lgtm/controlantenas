@@ -4,93 +4,138 @@ from supabase import create_client, Client
 import io
 from datetime import datetime
 
-# 1. CONFIGURACIÓN
-st.set_page_config(page_title="Sistema Antenas Hugo", layout="wide")
+# 1. CONFIGURACIÓN DE PÁGINA
+st.set_page_config(page_title="Sistema Antenas Hugo", layout="wide", page_icon="📡")
 
-# Verificamos que los Secrets existan
-if "SUPABASE_URL" not in st.secrets or "SUPABASE_KEY" not in st.secrets:
-    st.error("❌ Error: No se encuentran las llaves en los Secrets de Streamlit.")
-    st.stop()
-
+# Conexión a Supabase
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(url, key)
 
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+if 'edit_client' not in st.session_state: st.session_state['edit_client'] = None
 
-# --- LOGIN SIMPLIFICADO ---
+# --- LOGIN (Texto Directo) ---
 if not st.session_state['logged_in']:
-    st.title("📡 Acceso Directo - Prueba de Conexión")
-    u_ing = st.text_input("Usuario (admin)").lower().strip()
-    p_ing = st.text_input("Contraseña (admin123)", type='password').strip()
+    st.title("📡 Gestión de Antenas - Acceso")
+    u_ing = st.text_input("Usuario").lower().strip()
+    p_ing = st.text_input("Contraseña", type='password').strip()
     
     if st.button("INGRESAR"):
-        # Traemos el usuario
         res = supabase.table("usuarios").select("*").eq("username", u_ing).execute()
-        
         if res.data:
-            clave_en_db = res.data[0]['password']
-            # COMPARACIÓN DIRECTA (Sin Hashes)
-            if p_ing == clave_en_db:
+            if p_ing == res.data[0]['password']:
                 st.session_state['logged_in'] = True
                 st.session_state['username'] = u_ing
                 st.session_state['rol'] = res.data[0]['rol']
                 st.rerun()
             else:
-                st.error(f"Contraseña no coincide. Escribiste: {p_ing} / En DB hay: {clave_en_db}")
+                st.error("Contraseña incorrecta")
         else:
-            st.error("El usuario no existe en Supabase.")
+            st.error("El usuario no existe")
 
-# --- EL RESTO DEL SISTEMA (IGUAL QUE ANTES) ---
+# --- SISTEMA ADENTRO ---
 else:
-    st.sidebar.success(f"Conectado: {st.session_state['username']}")
+    st.sidebar.title(f"👤 {st.session_state['username']}")
+    menu = ["📊 Panel General", "📝 Registrar/Editar", "📧 Cuentas", "⚙️ Planes"]
+    choice = st.sidebar.selectbox("Menú", menu)
+    
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state['logged_in'] = False
         st.rerun()
-    
-    menu = ["📊 Panel General", "📝 Registrar/Editar", "📧 Cuentas", "⚙️ Planes"]
-    choice = st.sidebar.selectbox("Menú", menu)
 
+    # --- 1. PANEL GENERAL ---
     if choice == "📊 Panel General":
-        st.header("Clientes")
+        st.header("Listado de Clientes")
         res = supabase.table("clientes").select("*, cuentas(mail)").execute()
+        
         if res.data:
             df = pd.DataFrame(res.data)
             df['Cuenta Mail'] = df['cuentas'].apply(lambda x: x['mail'] if x else "N/A")
+            
+            st.metric("Total Clientes", len(df), f"${df['costo'].sum():,.2f} Mensuales")
+            
+            busq = st.text_input("🔍 Buscar por cualquier campo...")
+            if busq:
+                df = df[df.apply(lambda r: r.astype(str).str.contains(busq, case=False).any(), axis=1)]
+            
             st.dataframe(df.drop(columns=['cuentas', 'cuenta_id']), use_container_width=True)
-        else:
-            st.info("No hay datos todavía.")
 
+            # Exportar Excel
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            st.download_button("📥 Bajar Listado Excel", output.getvalue(), "clientes_antenas.xlsx")
+
+            st.write("---")
+            col_e, col_b = st.columns(2)
+            with col_e:
+                id_edit = st.number_input("ID para editar", min_value=0, step=1)
+                if st.button("Cargar Datos"):
+                    st.session_state['edit_client'] = next((i for i in res.data if i['id'] == id_edit), None)
+                    if st.session_state['edit_client']: st.success("Cargado. Ve a Registrar/Editar")
+            
+            if st.session_state['rol'] == "Administrador":
+                with col_b:
+                    id_del = st.number_input("ID para borrar", min_value=0, step=1)
+                    if st.button("❌ Eliminar Permanente"):
+                        supabase.table("clientes").delete().eq("id", id_del).execute()
+                        st.rerun()
+        else:
+            st.info("No hay datos. Empezá cargando Cuentas y Planes.")
+
+    # --- 2. REGISTRAR / EDITAR ---
     elif choice == "📝 Registrar/Editar":
-        st.header("Cargar Cliente")
+        edit = st.session_state['edit_client']
+        st.header("🛠️ Editar" if edit else "🆕 Nuevo Registro")
+        
         res_ctas = supabase.table("cuentas").select("*").execute()
         res_plns = supabase.table("planes").select("*").execute()
+
         if not res_ctas.data or not res_plns.data:
-            st.warning("Cargá Cuentas y Planes primero.")
+            st.warning("⚠️ Cargá Cuentas y Planes antes de seguir.")
         else:
-            with st.form("f"):
-                nom = st.text_input("Nombre")
-                cos = st.number_input("Costo", min_value=0.0)
-                pla = st.selectbox("Plan", [p['nombre_plan'] for p in res_plns.data])
+            with st.form("form_registro"):
+                c1, c2 = st.columns(2)
+                nombre = c1.text_input("Nombre", value=edit['nombre'] if edit else "")
+                zona = c1.text_input("Zona", value=edit['zona'] if edit else "")
+                costo = c2.number_input("Costo", value=float(edit['costo']) if edit else 0.0)
+                s_ant = c2.text_input("Serie Antena", value=edit['serie_antena'] if edit else "")
+                s_rou = c2.text_input("Serie Router", value=edit['serie_router'] if edit else "")
+                
+                plan = st.selectbox("Plan", [p['nombre_plan'] for p in res_plns.data])
                 map_c = {c['mail']: c['id'] for c in res_ctas.data}
-                cta = st.selectbox("Cuenta", list(map_c.keys()))
-                if st.form_submit_button("Guardar"):
-                    d = {"nombre": nom, "plan": pla, "costo": cos, "cuenta_id": map_c[cta], "fecha_inst": str(datetime.now().date())}
-                    supabase.table("clientes").insert(d).execute()
-                    st.success("Guardado!")
+                cta = st.selectbox("Cuenta Mail", list(map_c.keys()))
+
+                if st.form_submit_button("GUARDAR EN LA NUBE"):
+                    datos = {
+                        "nombre": nombre, "zona": zona, "plan": plan, "costo": costo,
+                        "serie_antena": s_ant, "serie_router": s_rou,
+                        "cuenta_id": map_c[cta], "fecha_inst": str(datetime.now().date())
+                    }
+                    if edit:
+                        supabase.table("clientes").update(datos).eq("id", edit['id']).execute()
+                        st.session_state['edit_client'] = None
+                    else:
+                        supabase.table("clientes").insert(datos).execute()
+                    st.success("¡Hecho!")
                     st.rerun()
 
+    # --- 3. CUENTAS ---
     elif choice == "📧 Cuentas":
-        m = st.text_input("Mail")
-        if st.button("Guardar"):
+        st.header("Gestión de Cuentas")
+        m = st.text_input("Nuevo Mail")
+        if st.button("Guardar Cuenta"):
             supabase.table("cuentas").insert({"mail": m}).execute()
             st.rerun()
         res = supabase.table("cuentas").select("*").execute()
         if res.data: st.table(pd.DataFrame(res.data))
 
+    # --- 4. PLANES ---
     elif choice == "⚙️ Planes":
-        p = st.text_input("Plan")
-        if st.button("Guardar"):
+        st.header("Gestión de Planes")
+        p = st.text_input("Nombre del Plan")
+        if st.button("Guardar Plan"):
             supabase.table("planes").insert({"nombre_plan": p}).execute()
             st.rerun()
         res = supabase.table("planes").select("*").execute()
